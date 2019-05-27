@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
+	"time"
 )
 
 type FetchResult struct {
@@ -45,12 +48,19 @@ type FetchItem struct {
 func main() {
 	consumerKey := os.Getenv("POCKET_CONSUMER_KEY")
 	accessToken := os.Getenv("POCKET_ACCESS_TOKEN")
-	slackUrl := os.Getenv("SLACK_POCKET_URL")
+	defaultSlackUrl := os.Getenv("SLACK_POCKET_URL")
+
+	isArchive := flag.Bool("a", false, "archive flag: default false")
+	number := flag.Int("n", 10, "item count")
+	sendSlack := flag.Bool("s", false, "send slack flag: default false")
+	slackUrl := flag.String("url", defaultSlackUrl, "slack channel url: env value of SLACK_POCKET_URL")
+
+	flag.Parse()
 
 	params := url.Values{}
 	params.Set("state", "unread")
 	params.Set("sort", "newest")
-	params.Set("count", "10")
+	params.Set("count", strconv.Itoa(*number))
 	params.Set("consumer_key", consumerKey)
 	params.Set("access_token", accessToken)
 
@@ -95,12 +105,43 @@ func main() {
 		}
 		text += fmt.Sprintf("%s ( %s )\n", title, itemUrl)
 
+		if *isArchive {
+			actions := fmt.Sprintf("[{\"action\":\"archive\",\"item_id\":\"%s\",\"time\":\"%d\"}]", fetchItem.ItemId, time.Now().Unix())
+
+			params := url.Values{}
+			params.Set("actions", actions)
+			params.Set("consumer_key", consumerKey)
+			params.Set("access_token", accessToken)
+
+			resp, err := http.Get("https://getpocket.com/v3/send?" + params.Encode())
+			if err != nil {
+				fmt.Println(err.Error())
+				continue
+			}
+
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				fmt.Println(err.Error())
+				continue
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				fmt.Println(string(body))
+				continue
+			}
+
+			fmt.Printf(`Title: "%s" is arhived\n`, title)
+		}
 	}
 
-	fmt.Println(text)
+	if !(*sendSlack) {
+		fmt.Println(text)
+		return
+	}
+
 	req, err := http.NewRequest(
 		"POST",
-		slackUrl,
+		*slackUrl,
 		bytes.NewBuffer([]byte(`{"text":"`+text+`"}`)))
 	if err != nil {
 		fmt.Println(err.Error())
